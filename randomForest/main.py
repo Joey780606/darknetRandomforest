@@ -324,23 +324,27 @@ class PersonClassifier:
         """
         合併歷史資料與本次新樣本，重新訓練 RandomForestClassifier。
         需要至少 2 個不同類別才能訓練。
+        無論訓練是否成功，本次樣本都會先累積至歷史資料並儲存。
         """
         try:
             if len(self._PendingFeatures) == 0:
                 print("[PersonClassifier] 無新樣本，訓練取消。")
                 return False
 
-            # 合併歷史資料與本次新樣本
-            AllFeatures = self._AllFeatures + self._PendingFeatures
-            AllLabels   = self._AllLabels   + self._PendingLabels
+            # 【關鍵】先將本次新樣本合併至歷史資料，
+            # 不論類別數是否足夠都要更新，否則第一個人的資料會遺失。
+            self._AllFeatures = self._AllFeatures + self._PendingFeatures
+            self._AllLabels   = self._AllLabels   + self._PendingLabels
 
-            UniqueClasses = list(set(AllLabels))
+            UniqueClasses = sorted(list(set(self._AllLabels)))
             if len(UniqueClasses) < 2:
                 print(f"[PersonClassifier] 只有 {len(UniqueClasses)} 個類別，需要至少 2 個。")
+                # 即使無法訓練，仍儲存已累積的資料，確保重開程式後資料不遺失
+                self.SaveModel()
                 return False
 
-            X = np.array(AllFeatures, dtype=np.float32)
-            Y = np.array(AllLabels)
+            X = np.array(self._AllFeatures, dtype=np.float32)
+            Y = np.array(self._AllLabels)
 
             # 訓練標籤編碼
             self._LabelEncoder = _LabelEncoder()
@@ -350,13 +354,10 @@ class PersonClassifier:
             self._Classifier = _RandomForest(NEstimators=50, MaxDepth=10)
             self._Classifier.fit(X, YEncoded)
 
-            # 更新歷史資料
-            self._AllFeatures  = AllFeatures
-            self._AllLabels    = AllLabels
             self._KnownPersons = list(self._LabelEncoder.classes_)
             self._IsReady      = True
 
-            print(f"[PersonClassifier] 訓練完成。已知人物：{self._KnownPersons}，樣本數：{len(AllFeatures)}")
+            print(f"[PersonClassifier] 訓練完成。已知人物：{self._KnownPersons}，樣本數：{len(self._AllFeatures)}")
             return True
 
         except Exception as Error:
@@ -411,8 +412,13 @@ class PersonClassifier:
             self._LabelEncoder = Payload["LabelEncoder"]
             self._AllFeatures  = Payload["AllFeatures"]
             self._AllLabels    = Payload["AllLabels"]
-            self._KnownPersons = list(self._LabelEncoder.classes_)
-            self._IsReady      = True
+            # LabelEncoder 可能為 None（只累積了 1 人但尚未完成訓練的情況）
+            if self._LabelEncoder is not None:
+                self._KnownPersons = list(self._LabelEncoder.classes_)
+                self._IsReady      = True
+            else:
+                self._KnownPersons = sorted(list(set(self._AllLabels)))
+                self._IsReady      = False
             print(f"[PersonClassifier] 模型載入成功。已知人物：{self._KnownPersons}")
             return True
         except Exception as Error:
@@ -424,8 +430,12 @@ class PersonClassifier:
         return self._IsReady and len(self._KnownPersons) >= 2
 
     def GetKnownPersons(self) -> list:
-        """回傳已知人物名單。"""
+        """回傳已訓練完成的人物名單。"""
         return list(self._KnownPersons)
+
+    def GetAccumulatedPersons(self) -> list:
+        """回傳已累積資料的人物名單（含尚未完成訓練的）。"""
+        return sorted(list(set(self._AllLabels)))
 
 
 # ==============================================================================
@@ -734,18 +744,28 @@ class MainApp(customtkinter.CTk):
         # 嘗試訓練模型
         TrainOk = self._Classifier.Train()
 
+        AccumulatedPersons = self._Classifier.GetAccumulatedPersons()
+        AccumulatedCount   = len(AccumulatedPersons)
+
         if TrainOk:
+            # 訓練成功，儲存模型
             SaveOk = self._Classifier.SaveModel()
+            PersonList = ', '.join(self._Classifier.GetKnownPersons())
             if SaveOk:
-                Msg = f"已完成 [{self._LearnName}] 的學習！\n已知人物：{', '.join(self._Classifier.GetKnownPersons())}"
+                Msg = f"已完成 [{self._LearnName}] 的學習！\n\n目前已訓練人物（共 {AccumulatedCount} 人）：\n{PersonList}"
             else:
-                Msg = f"學習完成，但模型儲存失敗。\n（本次學習的資料仍可在本 session 使用）"
+                Msg = f"學習完成，但模型儲存失敗。\n目前已訓練人物（共 {AccumulatedCount} 人）：{PersonList}"
             MsgBox.showinfo("學習完成", Msg)
         else:
-            MsgBox.showwarning(
-                "學習失敗",
-                "樣本不足或目前只有 1 個人的資料。\n辨識功能需要至少 2 個不同人的學習資料。"
+            # 訓練失敗（類別不足），顯示已累積幾人及還需幾人
+            PersonList  = ', '.join(AccumulatedPersons) if AccumulatedPersons else "（無）"
+            NeedMore    = max(0, 2 - AccumulatedCount)
+            Msg = (
+                f"已儲存 [{self._LearnName}] 的資料。\n\n"
+                f"目前累積人物（共 {AccumulatedCount} 人）：{PersonList}\n\n"
+                f"還需再學習 {NeedMore} 人，才能啟用辨識功能。"
             )
+            MsgBox.showinfo("資料已儲存", Msg)
 
         # 根據分類器狀態決定辨識按鈕是否可用
         if self._Classifier.CanDetect():
