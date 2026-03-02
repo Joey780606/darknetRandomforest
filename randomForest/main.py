@@ -21,7 +21,7 @@ from collections import Counter
 import cv2
 import numpy as np
 import customtkinter
-from PIL import Image, ImageTk
+from PIL import Image
 import tkinter.messagebox as MsgBox
 
 from inference import load_class_names, load_network, detect_landmarks, draw_landmarks
@@ -608,17 +608,16 @@ class MainApp(customtkinter.CTk):
                 if self._LastLandmarks and self._ClassNames:
                     Frame = draw_landmarks(Frame, self._LastLandmarks, self._ClassNames)
 
-                # 轉換 BGR → RGB → PIL Image → PhotoImage
+                # 轉換 BGR → RGB → PIL Image → CTkImage
                 FrameRgb = cv2.cvtColor(Frame, cv2.COLOR_BGR2RGB)
                 Img = Image.fromarray(FrameRgb)
 
                 # 縮放至 canvas 尺寸
                 W = self._WebcamCanvas.winfo_width()
                 H = self._WebcamCanvas.winfo_height()
-                if W > 1 and H > 1:
-                    Img = Img.resize((W, H), Image.LANCZOS)
+                DisplaySize = (W, H) if W > 1 and H > 1 else (Img.width, Img.height)
 
-                Photo = ImageTk.PhotoImage(Img)
+                Photo = customtkinter.CTkImage(light_image=Img, size=DisplaySize)
                 self._WebcamCanvas.configure(image=Photo, text="")
                 self._CurrentPhotoImage = Photo   # 保持參照，防止 GC 回收
 
