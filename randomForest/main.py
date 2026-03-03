@@ -190,7 +190,7 @@ NMS_THRESHOLD   = 0.4
 
 # --- 應用程式常數 ---
 DETECT_SECONDS  = 10     # 辨識模式持續秒數
-LEARN_SECONDS   = 60     # 學習模式持續秒數
+LEARN_SECONDS   = 40     # 學習模式持續秒數
 MIN_LANDMARKS   = 3      # 最少需要偵測到的特徵點數
 FEATURE_DIM     = 10     # C(5,2) = 10 個 pairwise 距離
 UI_REFRESH_MS   = 30     # webcam 畫面更新間隔（毫秒）
@@ -486,9 +486,13 @@ class MainApp(customtkinter.CTk):
         self.protocol("WM_DELETE_WINDOW", self._OnClose)
         self.resizable(True, True)
 
+        # 使用 grid 佈局，讓 Row2 可垂直延伸，Row0/1/3 固定高度
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(2, weight=1)   # 只有 Row2 垂直延伸
+
         # Row 0：辨識功能列
         Row0 = customtkinter.CTkFrame(self)
-        Row0.pack(fill="x", padx=10, pady=(10, 5))
+        Row0.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 5))
 
         self._BtnDetectName = customtkinter.CTkButton(
             Row0,
@@ -507,7 +511,7 @@ class MainApp(customtkinter.CTk):
 
         # Row 1：學習功能列
         Row1 = customtkinter.CTkFrame(self)
-        Row1.pack(fill="x", padx=10, pady=5)
+        Row1.grid(row=1, column=0, sticky="ew", padx=10, pady=5)
 
         self._TblMyName = customtkinter.CTkEntry(
             Row1,
@@ -524,9 +528,11 @@ class MainApp(customtkinter.CTk):
         )
         self._BtnLearn.pack(side="left", padx=5, pady=5)
 
-        # Row 2：Webcam 畫面
+        # Row 2：Webcam 畫面（垂直延伸）
         Row2 = customtkinter.CTkFrame(self)
-        Row2.pack(fill="both", expand=True, padx=10, pady=5)
+        Row2.grid(row=2, column=0, sticky="nsew", padx=10, pady=5)
+        Row2.grid_columnconfigure(0, weight=1)
+        Row2.grid_rowconfigure(0, weight=1)
 
         self._WebcamCanvas = customtkinter.CTkLabel(
             Row2,
@@ -534,11 +540,11 @@ class MainApp(customtkinter.CTk):
             width=640,
             height=480
         )
-        self._WebcamCanvas.pack(fill="both", expand=True)
+        self._WebcamCanvas.grid(row=0, column=0, sticky="nsew")
 
-        # Row 3：剩餘時間列
+        # Row 3：剩餘時間列（固定高度，始終可見）
         Row3 = customtkinter.CTkFrame(self)
-        Row3.pack(fill="x", padx=10, pady=(5, 10))
+        Row3.grid(row=3, column=0, sticky="ew", padx=10, pady=(5, 10))
 
         self._LblRemain = customtkinter.CTkLabel(
             Row3,
@@ -612,10 +618,10 @@ class MainApp(customtkinter.CTk):
                 FrameRgb = cv2.cvtColor(Frame, cv2.COLOR_BGR2RGB)
                 Img = Image.fromarray(FrameRgb)
 
-                # 縮放至 canvas 尺寸
-                W = self._WebcamCanvas.winfo_width()
-                H = self._WebcamCanvas.winfo_height()
-                DisplaySize = (W, H) if W > 1 and H > 1 else (Img.width, Img.height)
+                # 縮放至 canvas 尺寸，最大不超過 640×480
+                W = min(self._WebcamCanvas.winfo_width(),  640)
+                H = min(self._WebcamCanvas.winfo_height(), 480)
+                DisplaySize = (W, H) if W > 1 and H > 1 else (min(Img.width, 640), min(Img.height, 480))
 
                 Photo = customtkinter.CTkImage(light_image=Img, size=DisplaySize)
                 self._WebcamCanvas.configure(image=Photo, text="")
