@@ -743,6 +743,7 @@ class MainApp(customtkinter.CTk):
     def _StopLearning(self) -> None:
         """結束學習模式，訓練並儲存模型。"""
         self._LearnActive = False
+        self._LastLandmarks = {}   # 清除特徵點覆蓋層
         self._LblRemain.configure(text="Remaining study seconds: --")
         self._BtnLearn.configure(state="normal")
 
