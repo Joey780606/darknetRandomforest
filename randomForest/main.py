@@ -32,23 +32,24 @@ from inference import load_class_names, load_network, detect_landmarks, draw_lan
 # ==============================================================================
 class _LabelEncoder:
     """簡易標籤編碼器，取代 sklearn.preprocessing.LabelEncoder。"""
+    """Joey: return np.array的原因,是因為會呼叫這些函式的後續處理都是以np.array來進行,配合上下文的處理"""
 
     def __init__(self):
         self.classes_    = []
         self._ClassToIdx = {}
 
     def fit_transform(self, Labels: list) -> np.ndarray:
-        """配適並轉換標籤為整數索引。"""
+        """配適並轉換標籤為整數索引。Joey:訓練時需要使用,原本是姓名和set的代號,fit_transform是把他們對調,後面有些處理不能用string"""
         self.classes_    = sorted(list(set(Labels)))
-        self._ClassToIdx = {C: I for I, C in enumerate(self.classes_)}
+        self._ClassToIdx = {C: I for I, C in enumerate(self.classes_)}  #I 是 Index, C是名稱,把他對調為 Key是名稱(C), Value是Index
         return np.array([self._ClassToIdx[L] for L in Labels], dtype=np.int32)
 
     def transform(self, Labels: list) -> np.ndarray:
-        """將標籤轉換為整數索引。"""
+        """目前沒使用.將標籤轉換為整數索引。Joey:因後續處理的元件無法使用string,所以先換成整數型態"""
         return np.array([self._ClassToIdx[L] for L in Labels], dtype=np.int32)
 
     def inverse_transform(self, Indices) -> list:
-        """將整數索引還原為標籤。"""
+        """將整數索引還原為標籤。Joey:預測時需要使用,要把數值轉換回對應的文字"""
         return [self.classes_[int(I)] for I in Indices]
 
 
@@ -57,6 +58,7 @@ class _LabelEncoder:
 # ==============================================================================
 class _DecisionTree:
     """簡易決策樹分類器，使用 Gini 不純度，支援隨機特徵子集。"""
+    """Joey: Gini 不純度（Gini Impurity）是決策樹在選擇分裂點時的評估指標。決策樹每個節點要決定「用哪個特徵、在哪個值切一刀」，怎麼判斷切得好不好？"""
 
     def __init__(self, MaxDepth: int = 10, MinSamplesSplit: int = 2, NFeatures: int = None):
         self._MaxDepth        = MaxDepth
@@ -68,7 +70,7 @@ class _DecisionTree:
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         """訓練決策樹。"""
         self._NClasses = int(np.max(y)) + 1
-        NFeat = self._NFeatures or X.shape[1]
+        NFeat = self._NFeatures or X.shape[1] #詢問array有幾筆資料[0]?每筆有多少項資料組成[1]?
         self._Tree = self._BuildTree(X, y, Depth=0, NFeat=NFeat)
 
     def _Gini(self, y: np.ndarray) -> float:
@@ -154,14 +156,14 @@ class _RandomForest:
         self._NClasses    = 0
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
-        """以 Bootstrap 抽樣訓練所有決策樹。"""
+        """以 Bootstrap 抽樣訓練所有決策樹。 Joey: X是face feature的陣列,Y是姓名的代號(我猜). 疑問,每個人都只有一個feature嗎?"""
         self._NClasses = int(np.max(y)) + 1
-        NSamples, NFeatures = X.shape
+        NSamples, NFeatures = X.shape   #Joey猜 NSamples會是 X的列數, NFeatures會是的欄位數
         # 每棵樹使用 sqrt(NFeatures) 個特徵（Random Forest 標準做法）
-        NFeat = max(1, int(np.sqrt(NFeatures)))
+        NFeat = max(1, int(np.sqrt(NFeatures))) #Joey說這是在做 「保底」。確保至少是1
         self._Trees = []
 
-        for _ in range(self._NEstimators):
+        for _ in range(self._NEstimators):  # do 50 times
             # Bootstrap 抽樣（有放回）
             Indices = np.random.choice(NSamples, size=NSamples, replace=True)
             Tree = _DecisionTree(MaxDepth=self._MaxDepth, MinSamplesSplit=2, NFeatures=NFeat)
@@ -273,7 +275,7 @@ class PersonClassifier:
     def __init__(self):
         self._Classifier      = None      # _RandomForest 實例
         self._LabelEncoder    = None      # _LabelEncoder 實例
-        self._IsReady         = False
+        self._IsReady         = False   #Joey: 是否有足夠的資料可以進行預測
         self._KnownPersons    = []
         # 歷史訓練資料（跨 session 累積）
         self._AllFeatures     = []   # list of np.ndarray, shape (10,)
@@ -291,13 +293,13 @@ class PersonClassifier:
         # 取得各特徵點的像素座標
         Points = {}
         for ClassId, Info in Landmarks.items():
-            Points[ClassId] = np.array(Info["center"], dtype=float)
+            Points[ClassId] = np.array(Info["center"], dtype=float)  # 參 [詳細資料01]
 
         # 計算所有 pair 的 Euclidean 距離
         RawDists = np.zeros(FEATURE_DIM, dtype=np.float32)
         for Idx, (A, B) in enumerate(PAIRS):
             if A in Points and B in Points:
-                RawDists[Idx] = float(np.linalg.norm(Points[A] - Points[B]))
+                RawDists[Idx] = float(np.linalg.norm(Points[A] - Points[B])) # RawDists[0] = 15 , 15 is distance between A~B
 
         # 以參考距離正規化（scale-invariant）
         # 優先使用左眼↔右眼距離（PAIRS index 0），最穩定的基準線
@@ -459,7 +461,7 @@ class MainApp(customtkinter.CTk):
         self._LearnRemainSecs   = 0
 
         # YOLO 推論狀態
-        self._Net               = None
+        self._Net               = None  #CPU or CUDA GPU process?
         self._OutputLayers      = []
         self._ClassNames        = []
         self._LastLandmarks     = {}   # 上次偵測結果快取（供 UI 繪製用）
@@ -581,7 +583,8 @@ class MainApp(customtkinter.CTk):
     def _LoadYolo(self) -> None:
         """載入 YOLO 類別名稱與網路模型。"""
         try:
-            self._ClassNames   = load_class_names(NAMES_PATH)
+            self._ClassNames   = load_class_names(NAMES_PATH) #五特徵名稱的list
+
             self._Net, self._OutputLayers = load_network(CFG_PATH, WEIGHTS_PATH)
         except Exception as Error:
             print(f"[MainApp] YOLO 模型載入失敗：{Error}")
@@ -834,3 +837,28 @@ if __name__ == "__main__":
     customtkinter.set_default_color_theme("blue")
     App = MainApp()
     App.mainloop()
+
+""" [詳細資料01]
+    for ClassId, Info in Landmarks.items():
+        Points[ClassId] = np.array(Info["center"], dtype=float)
+
+  說明:
+  Landmarks 是 YOLO 偵測回傳的字典，結構長這樣：                                                                                                     
+  Landmarks = {                                                                                        
+      0: {"center": (150, 200), "confidence": 0.95},   # 左眼
+      1: {"center": (250, 205), "confidence": 0.92},   # 右眼
+      2: {"center": (200, 280), "confidence": 0.88},   # 鼻子
+      ...
+  }
+
+  所以這行做的事：
+  Info["center"]                          # 取出 tuple，例如 (150, 200)
+  np.array(Info["center"], dtype=float)   # 轉成 numpy array: [150.0, 200.0]
+  Points[ClassId] = ...                   # 存到 Points 字典，key 是 class_id
+
+  為什麼要轉成 numpy array？ 因為後面第 302 行要做向量運算：
+
+  np.linalg.norm(Points[A] - Points[B])
+  - Points[A] - Points[B] → [150.0, 200.0] - [250.0, 205.0] → [-100.0, -5.0]
+  - np.linalg.norm(...) → 計算歐氏距離 → sqrt(100的平方 + 5的平方) = 100.12
+"""
