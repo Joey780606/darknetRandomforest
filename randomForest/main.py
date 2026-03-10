@@ -12,6 +12,7 @@ main.py
     （不需要 scikit-learn / scipy，Random Forest 以純 numpy 實作）
 """
 
+from copy import Error
 import os
 import pickle
 import threading
@@ -187,7 +188,7 @@ MODEL_PATH   = "models/rf_classifier.pkl"
 
 # --- YOLO 推論常數 ---
 YOLO_INPUT_SIZE = 416
-CONF_THRESHOLD  = 0.5
+CONF_THRESHOLD  = 0.5   # 每個點信心度閾值，低於此值的點會被忽略,試用0.55
 NMS_THRESHOLD   = 0.4
 
 # --- 應用程式常數 ---
@@ -198,6 +199,7 @@ FEATURE_DIM     = 10     # C(5,2) = 10 個 pairwise 距離
 UI_REFRESH_MS   = 30     # webcam 畫面更新間隔（毫秒）
 LEARN_TICK_MS   = 500    # 學習時每次抓 frame 的間隔（每秒 2 個樣本）
 DETECT_TICK_MS  = 200    # 辨識時每次推論的間隔
+PREDICT_THRESHOLD = 0.7     # 設定預測的機率閾值，低於此值的預測將被視為 "Not found"
 
 # pairwise 索引對（共 10 組，C(5,2)）
 # 0:(0,1) 1:(0,2) 2:(0,3) 3:(0,4)
@@ -296,7 +298,7 @@ class PersonClassifier:
             Points[ClassId] = np.array(Info["center"], dtype=float)  # 參 [詳細資料01]
 
         # 計算所有 pair 的 Euclidean 距離
-        RawDists = np.zeros(FEATURE_DIM, dtype=np.float32)
+        RawDists = np.zeros(FEATURE_DIM, dtype=np.float32) # RefDists會是10個浮點數的array,5個特徵點兩兩組合的距離
         for Idx, (A, B) in enumerate(PAIRS):
             if A in Points and B in Points:
                 RawDists[Idx] = float(np.linalg.norm(Points[A] - Points[B])) # RawDists[0] = 15 , 15 is distance between A~B
@@ -309,7 +311,9 @@ class PersonClassifier:
             NonZero = RawDists[RawDists > 1e-6]
             RefDist = float(NonZero.max()) if len(NonZero) > 0 else 1.0
 
+        # print(f"Classifier extractFeatures 1: {RawDists}, RefDist: {RefDist:.2f}")
         NormDists = RawDists / RefDist
+        # print(f"Classifier extractFeatures 2: {NormDists}")
         return NormDists
 
     def AddSample(self, Features: np.ndarray, PersonName: str) -> None:
@@ -375,7 +379,7 @@ class PersonClassifier:
             if not self._IsReady or self._Classifier is None:
                 return "Not found", 0.0
 
-            Probs   = self._Classifier.predict_proba(Features.reshape(1, -1))[0]
+            Probs   = self._Classifier.predict_proba(Features.reshape(1, -1))[0] #參[詳細資料02]
             BestIdx = int(np.argmax(Probs))
             BestProb = float(Probs[BestIdx])
             BestName = self._LabelEncoder.inverse_transform([BestIdx])[0]
@@ -669,11 +673,20 @@ class MainApp(customtkinter.CTk):
         self._DetectActive = False
         self._BtnDetectName.configure(text="Detect face")
         self._BtnLearn.configure(state="normal")
+        self.propotionsStr = ""
 
         if self._DetectPredictions:
             # 多數決：取出現次數最多的名字
-            BestName = Counter(self._DetectPredictions).most_common(1)[0][0]
-            self._LblDetectName.configure(text=BestName)
+            # BestName = Counter(self._DetectPredictions).most_common(1)[0][0]
+            counts = Counter(self._DetectPredictions)
+            total_count = counts.total() #計算總數
+            proportions = { k: v / total_count for k, v in counts.items() } #計算每個名字的比例
+
+            # key=lambda item: item[1] 代表針對 "Value" (索引 1) 排序, reverse=True 代表由大到小
+            sorted_proportions = dict(sorted(proportions.items(), key=lambda item: item[1], reverse=True)) #將比例從大到小排序
+            for name, rate in sorted_proportions.items():
+                self.propotionsStr += f"{name}, 機率:{rate * 100:.2f}%; "
+            self._LblDetectName.configure(text=self.propotionsStr)
         else:
             self._LblDetectName.configure(text="Not found")
             MsgBox.showinfo("辨識結果", "找不到符合的人臉。\n請確認臉部在鏡頭範圍內，或先進行學習。")
@@ -701,9 +714,11 @@ class MainApp(customtkinter.CTk):
                 # 若偵測到足夠的特徵點，進行 RF 預測
                 if len(Landmarks) >= MIN_LANDMARKS:
                     H, W = Frame.shape[:2]
-                    Features = self._Classifier.ExtractFeatures(Landmarks, W, H)
+                    print(f"偵測:原圖高與寬：{H}, {W}")
+                    Features = self._Classifier.ExtractFeatures(Landmarks, W, H) #回傳一個10維的特徵向量
                     Name, Prob = self._Classifier.Predict(Features)
-                    if Name != "Not found":
+                    if Name != "Not found" or Prob >= PREDICT_THRESHOLD:
+                        print(f"偵測:辨識名稱與機率：{Name}, {Prob:.2f}")
                         self._DetectPredictions.append(Name)
 
         except Exception as Error:
@@ -861,4 +876,31 @@ if __name__ == "__main__":
   np.linalg.norm(Points[A] - Points[B])
   - Points[A] - Points[B] → [150.0, 200.0] - [250.0, 205.0] → [-100.0, -5.0]
   - np.linalg.norm(...) → 計算歐氏距離 → sqrt(100的平方 + 5的平方) = 100.12
+"""
+
+""" [詳細資料02]
+  為何要這樣做?
+  Probs   = self._Classifier.predict_proba(Features.reshape(1, -1))[0]?
+
+  1. Features.reshape(1, -1) — 為什麼要 reshape？
+  predict_proba() 設計上是接受多筆樣本（批次輸入），期望輸入格式是：
+
+  shape (N, 10)   → N 筆樣本，每筆 10 個特徵
+
+  但 Features 只是單筆特徵向量：
+  shape (10,)     → 1 筆樣本，10 個特徵（1D array）
+
+  直接傳進去會讓內部的矩陣運算出錯，所以要轉成：
+  reshape(1, -1)  → shape (1, 10)   # 1 筆，10 個特徵（2D array）
+  -1 的意思是「欄位數自動計算」，等同於 reshape(1, 10)。
+
+  ---
+  2. [0] — 為什麼要取第 0 個？
+  predict_proba() 回傳的是所有樣本的機率矩陣：
+
+  # 輸入 1 筆，回傳 shape (1, 2)
+  # 例如已訓練 Joey 和 Alice：
+  [[0.3, 0.7]]    # 外層還包著一層 list
+
+  加上 [0] 取第一筆，才能拿到我們要的機率陣列：
 """
