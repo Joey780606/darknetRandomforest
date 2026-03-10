@@ -665,6 +665,7 @@ class MainApp(customtkinter.CTk):
     def _StopDetection(self) -> None:
         """結束辨識模式，顯示辨識結果。"""
         self._DetectActive = False
+        self._LastLandmarks = {}   # 清除特徵點覆蓋層
         self._BtnDetectName.configure(text="Detect face")
         self._BtnLearn.configure(state="normal")
         self._showResult()
