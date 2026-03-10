@@ -658,14 +658,8 @@ class MainApp(customtkinter.CTk):
 
     def _StartDetection(self) -> None:
         """開始辨識模式。"""
-        self._DetectActive      = True
-        self._DetectStartTime   = time.time()
-        self._DetectPredictions = []
-        self._BtnDetectName.configure(text="Stop detect face")
+        self._refreshDetectionInfo()
         self._LblDetectName.configure(text="辨識中...")
-        # 停用學習按鈕（辨識期間不允許學習）
-        self._BtnLearn.configure(state="disabled")
-        # 啟動辨識 tick
         self.after(0, self._DetectionTick)
 
     def _StopDetection(self) -> None:
@@ -673,6 +667,9 @@ class MainApp(customtkinter.CTk):
         self._DetectActive = False
         self._BtnDetectName.configure(text="Detect face")
         self._BtnLearn.configure(state="normal")
+        self._showResult()
+
+    def _showResult(self) -> None:
         self.propotionsStr = ""
 
         if self._DetectPredictions:
@@ -691,6 +688,15 @@ class MainApp(customtkinter.CTk):
             self._LblDetectName.configure(text="Not found")
             MsgBox.showinfo("辨識結果", "找不到符合的人臉。\n請確認臉部在鏡頭範圍內，或先進行學習。")
 
+    def _refreshDetectionInfo(self) -> None:
+        """清除Detect的一些設定,讓他還是可以繼續偵測"""
+        self._DetectActive      = True
+        self._DetectStartTime   = time.time()
+        self._DetectPredictions = []
+        self._BtnDetectName.configure(text="Stop detect face")
+        # 停用學習按鈕（辨識期間不允許學習）
+        self._BtnLearn.configure(state="disabled")
+    
     def _DetectionTick(self) -> None:
         """辨識模式每次推論的 tick（每 200ms 執行一次）。"""
         if not self._DetectActive:
@@ -698,8 +704,9 @@ class MainApp(customtkinter.CTk):
 
         Elapsed = time.time() - self._DetectStartTime
         if Elapsed >= DETECT_SECONDS:
-            self._StopDetection()
-            return
+            self._showResult()
+            self._refreshDetectionInfo() 
+            #return
 
         try:
             Ok, Frame = self._Webcam.GetLatestFrame()
@@ -720,6 +727,7 @@ class MainApp(customtkinter.CTk):
                     if Name != "Not found" or Prob >= PREDICT_THRESHOLD:
                         print(f"偵測:辨識名稱與機率：{Name}, {Prob:.2f}")
                         self._DetectPredictions.append(Name)
+                        self._showResult()
 
         except Exception as Error:
             print(f"[MainApp] 辨識 tick 失敗：{Error}")
